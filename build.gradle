@@ -25,7 +25,7 @@ apply plugin: 'jsonschema2pojo'
 
 final def projectGroup = "net.jacobpeterson"
 final def projectArtifactID = "iqfeed4j"
-final def projectVersion = "6.2-2.0.0-SNAPSHOT"
+final def projectVersion = "6.2-2.0.0-UT"
 
 group = projectGroup
 version = projectVersion
@@ -105,17 +105,17 @@ publishing {
     }
     repositories {
         maven {
-            name = "OSSRH"
-            url = projectVersion.contains("SNAPSHOT") ? "https://oss.sonatype.org/content/repositories/snapshots/" :
-                    "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+            name = "PrivateNexus"
+            url = project.findProperty("nexus.url") ?: System.getenv("NEXUS_URL")
             credentials {
-                username = project.property("nexus.username")
-                password = project.property("nexus.password")
+                username = project.findProperty("nexus.username") ?: System.getenv("NEXUS_USERNAME")
+                password = project.findProperty("nexus.password") ?: System.getenv("NEXUS_PASSWORD")
             }
         }
     }
 }
 signing {
+    required { false }
     sign publishing.publications.mavenJava
 }
 
