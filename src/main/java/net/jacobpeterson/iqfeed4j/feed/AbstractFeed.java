@@ -189,7 +189,12 @@ public abstract class AbstractFeed implements Runnable {
                 }
             } catch (Exception exception) {
                 if (intentionalSocketClose) {
-                    onFeedSocketClose();
+                    try {
+                        onFeedSocketClose();
+                    } catch (Exception callbackException) {
+                        logger.error("{} feed socket close callback threw an exception!", feedName,
+                                callbackException);
+                    }
                 } else {
                     try {
                         closeSocket();
@@ -197,7 +202,12 @@ public abstract class AbstractFeed implements Runnable {
                         logger.error("Could not close {} socket!", feedName, stopException);
                     }
 
-                    onFeedSocketException(exception);
+                    try {
+                        onFeedSocketException(exception);
+                    } catch (Exception callbackException) {
+                        logger.error("{} feed socket exception callback threw an exception!", feedName,
+                                callbackException);
+                    }
                 }
 
                 return;

@@ -3,7 +3,7 @@
 This project uses Gradle as its primary build system but includes a Maven `pom.xml` adapter to integrate with standard company CI/CD pipelines.
 
 ## Versioning
-The current version is set to `6.2-2.0.0-UT` in both `build.gradle` and `pom.xml`.
+The current version is set to `6.2-2.0.1-UT` in both `build.gradle` and `pom.xml`.
 
 ## Local Development
 

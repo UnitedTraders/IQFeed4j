@@ -7,7 +7,7 @@
     <!-- some kind of adapter to gradle -->
     <groupId>net.jacobpeterson</groupId>
     <artifactId>iqfeed4j</artifactId>
-    <version>6.2-2.0.0-UT</version>
+    <version>6.2-2.0.1-UT</version>
     <packaging>pom</packaging>
 
     <build>

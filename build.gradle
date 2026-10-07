@@ -25,7 +25,7 @@ apply plugin: 'jsonschema2pojo'
 
 final def projectGroup = "net.jacobpeterson"
 final def projectArtifactID = "iqfeed4j"
-final def projectVersion = "6.2-2.0.0-UT"
+final def projectVersion = "6.2-2.0.1-UT"
 
 group = projectGroup
 version = projectVersion
@@ -50,6 +50,14 @@ dependencies {
 
     // Apache Commons object pooling
     implementation group: 'org.apache.commons', name: 'commons-pool2', version: '2.11.1'
+
+    // Testing
+    testImplementation group: 'org.junit.jupiter', name: 'junit-jupiter', version: '5.10.2'
+    testRuntimeOnly group: 'org.junit.platform', name: 'junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
 }
 
 java {
