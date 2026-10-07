@@ -43,9 +43,12 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -378,10 +381,10 @@ public class Level1Feed extends AbstractServerConnectionFeed {
     }
 
     protected final Object messageReceivedLock;
-    protected final HashMap<String, FeedMessageListener<FundamentalData>> fundamentalDataListenersOfSymbols;
-    protected final HashMap<String, FeedMessageListener<SummaryUpdate>> summaryUpdateListenersOfSymbols;
-    protected final HashMap<String, FeedMessageListener<RegionalQuote>> regionalQuoteListenersOfSymbols;
-    protected final HashMap<String, FeedMessageListener<TradeCorrection>> tradeCorrectionListenersOfSymbols;
+    protected final Map<String, FeedMessageListener<FundamentalData>> fundamentalDataListenersOfSymbols;
+    protected final Map<String, FeedMessageListener<SummaryUpdate>> summaryUpdateListenersOfSymbols;
+    protected final Map<String, FeedMessageListener<RegionalQuote>> regionalQuoteListenersOfSymbols;
+    protected final Map<String, FeedMessageListener<TradeCorrection>> tradeCorrectionListenersOfSymbols;
     // Using 'Queue' here since IQConnect.exe handles all requests with FIFO priority
     protected final Queue<SingleMessageFuture<LocalDateTime>> timestampFuturesQueue;
     protected final Queue<SingleMessageFuture<FeedStatistics>> feedStatisticsFuturesQueue;
@@ -410,17 +413,17 @@ public class Level1Feed extends AbstractServerConnectionFeed {
         super(LOGGER, level1FeedName + FEED_NAME_SUFFIX, hostname, port, COMMA_DELIMITED_SPLITTER, true, true);
 
         messageReceivedLock = new Object();
-        fundamentalDataListenersOfSymbols = new HashMap<>();
-        summaryUpdateListenersOfSymbols = new HashMap<>();
-        regionalQuoteListenersOfSymbols = new HashMap<>();
-        tradeCorrectionListenersOfSymbols = new HashMap<>();
-        timestampFuturesQueue = new LinkedList<>();
-        feedStatisticsFuturesQueue = new LinkedList<>();
-        fundamentalFieldNamesFuturesQueue = new LinkedList<>();
-        allUpdateFieldNamesFuturesQueue = new LinkedList<>();
-        currentUpdateFieldNamesFuturesQueue = new LinkedList<>();
-        logLevelsFuturesQueue = new LinkedList<>();
-        watchedSymbolsFuturesQueue = new LinkedList<>();
+        fundamentalDataListenersOfSymbols = new ConcurrentHashMap<>();
+        summaryUpdateListenersOfSymbols = new ConcurrentHashMap<>();
+        regionalQuoteListenersOfSymbols = new ConcurrentHashMap<>();
+        tradeCorrectionListenersOfSymbols = new ConcurrentHashMap<>();
+        timestampFuturesQueue = new ConcurrentLinkedQueue<>();
+        feedStatisticsFuturesQueue = new ConcurrentLinkedQueue<>();
+        fundamentalFieldNamesFuturesQueue = new ConcurrentLinkedQueue<>();
+        allUpdateFieldNamesFuturesQueue = new ConcurrentLinkedQueue<>();
+        currentUpdateFieldNamesFuturesQueue = new ConcurrentLinkedQueue<>();
+        logLevelsFuturesQueue = new ConcurrentLinkedQueue<>();
+        watchedSymbolsFuturesQueue = new ConcurrentLinkedQueue<>();
 
         level1FeedEventListener = new Level1FeedEventListener() {
             @Override
@@ -435,7 +438,7 @@ public class Level1Feed extends AbstractServerConnectionFeed {
 
             @Override
             public void onSymbolNotWatched(String symbol) {
-                LOGGER.error("{} symbol not watched!", symbol);
+                LOGGER.warn("{} symbol not watched!", symbol);
             }
         };
 
@@ -772,19 +775,50 @@ public class Level1Feed extends AbstractServerConnectionFeed {
 
     @Override
     protected void onFeedSocketException(Exception exception) {
-        fundamentalDataListenersOfSymbols.values().forEach(listener -> listener.onMessageException(exception));
-        summaryUpdateListenersOfSymbols.values().forEach(listener -> listener.onMessageException(exception));
-        regionalQuoteListenersOfSymbols.values().forEach(listener -> listener.onMessageException(exception));
-        tradeCorrectionListenersOfSymbols.values().forEach(listener -> listener.onMessageException(exception));
-        timestampFuturesQueue.forEach(future -> future.completeExceptionally(exception));
-        feedStatisticsFuturesQueue.forEach(future -> future.completeExceptionally(exception));
-        fundamentalFieldNamesFuturesQueue.forEach(future -> future.completeExceptionally(exception));
-        allUpdateFieldNamesFuturesQueue.forEach(future -> future.completeExceptionally(exception));
-        currentUpdateFieldNamesFuturesQueue.forEach(future -> future.completeExceptionally(exception));
-        logLevelsFuturesQueue.forEach(future -> future.completeExceptionally(exception));
-        watchedSymbolsFuturesQueue.forEach(future -> future.completeExceptionally(exception));
+        // The listener maps and future queues are concurrent collections, so their iterators are weakly consistent and
+        // never throw a ConcurrentModificationException - even when a listener or future callback reentrantly mutates
+        // them (e.g. a 'completeExceptionally' continuation calling a watch/unwatch command) or when a concurrent
+        // watch/unwatch request mutates them from another thread. Listeners and futures are still notified
+        // individually so that one misbehaving callback cannot prevent the remaining ones from being notified.
+        notifyListenersOfExceptionSafely(fundamentalDataListenersOfSymbols.values(), exception);
+        notifyListenersOfExceptionSafely(summaryUpdateListenersOfSymbols.values(), exception);
+        notifyListenersOfExceptionSafely(regionalQuoteListenersOfSymbols.values(), exception);
+        notifyListenersOfExceptionSafely(tradeCorrectionListenersOfSymbols.values(), exception);
+        completeFuturesExceptionallySafely(timestampFuturesQueue, exception);
+        completeFuturesExceptionallySafely(feedStatisticsFuturesQueue, exception);
+        completeFuturesExceptionallySafely(fundamentalFieldNamesFuturesQueue, exception);
+        completeFuturesExceptionallySafely(allUpdateFieldNamesFuturesQueue, exception);
+        completeFuturesExceptionallySafely(currentUpdateFieldNamesFuturesQueue, exception);
+        completeFuturesExceptionallySafely(logLevelsFuturesQueue, exception);
+        completeFuturesExceptionallySafely(watchedSymbolsFuturesQueue, exception);
         if (newsHeadlineListener != null) {
-            newsHeadlineListener.onMessageException(exception);
+            try {
+                newsHeadlineListener.onMessageException(exception);
+            } catch (Exception listenerException) {
+                LOGGER.error("Could not notify news headline listener of socket exception!", listenerException);
+            }
+        }
+    }
+
+    private static void notifyListenersOfExceptionSafely(
+            Iterable<? extends FeedMessageListener<?>> listeners, Exception exception) {
+        for (FeedMessageListener<?> listener : listeners) {
+            try {
+                listener.onMessageException(exception);
+            } catch (Exception listenerException) {
+                LOGGER.error("Could not notify feed listener of socket exception!", listenerException);
+            }
+        }
+    }
+
+    private static void completeFuturesExceptionallySafely(
+            Iterable<? extends CompletableFuture<?>> futures, Exception exception) {
+        for (CompletableFuture<?> future : futures) {
+            try {
+                future.completeExceptionally(exception);
+            } catch (Exception futureException) {
+                LOGGER.error("Could not complete feed future exceptionally!", futureException);
+            }
         }
     }
 
